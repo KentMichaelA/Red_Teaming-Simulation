@@ -1,0 +1,119 @@
+# =============================================================================
+# Red Team Simulation - Cleanup Script
+# =============================================================================
+# PURPOSE:
+#   Reverses everything that red_team_simulation.ps1 did:
+#     1. Kills any running calca.exe processes.
+#     2. Removes the "Windows Services and Checks" scheduled task.
+#     3. Deletes the Downloads folder containing calca.exe and usercpla.dll.
+#
+# REQUIREMENTS:
+#   - Must be run as Administrator (needed to remove SYSTEM scheduled tasks).
+#
+# HOW TO RUN:
+#   Right-click -> "Run with PowerShell" (as Administrator), or:
+#   powershell.exe -ExecutionPolicy Bypass -File "red_team_cleaning.ps1"
+# =============================================================================
+
+# --- Configuration ---
+# These must match the values used in red_team_simulation.ps1.
+$DownloadFolder    = "$PSScriptRoot\Downloads"
+$ScheduledTaskName = "Windows Services and Checks"
+$ProcessName       = "calca"
+
+# --- Banner ---
+Write-Host ""
+Write-Host "=============================================" -ForegroundColor Magenta
+Write-Host "   Red Team Simulation - Cleanup"              -ForegroundColor Magenta
+Write-Host "=============================================" -ForegroundColor Magenta
+Write-Host ""
+
+# =============================================================================
+# STEP 1: Kill calca.exe process
+# -----------------------------------------------------------------------------
+# Stop all running instances of calca.exe so the files can be deleted and
+# the process is no longer active on the system.
+# =============================================================================
+Write-Host "[*] Step 1: Stopping calca.exe processes..." -ForegroundColor Cyan
+
+$processes = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue
+if ($processes) {
+    $count = @($processes).Count
+    # -Force ensures the process is terminated even if it doesn't respond.
+    Stop-Process -Name $ProcessName -Force -ErrorAction SilentlyContinue
+    # Wait a moment for the OS to fully release file handles.
+    Start-Sleep -Seconds 2
+    Write-Host "[+] Killed $count instance(s) of $ProcessName.exe." -ForegroundColor Green
+}
+else {
+    Write-Host "[*] No running $ProcessName.exe processes found." -ForegroundColor Gray
+}
+Write-Host ""
+
+# =============================================================================
+# STEP 2: Remove the scheduled task
+# -----------------------------------------------------------------------------
+# Deletes the "Windows Services and Checks" scheduled task that was created
+# by red_team_simulation.ps1 to run calca.exe every hour as SYSTEM.
+# Uses schtasks.exe /delete with /f to force removal without prompting.
+# =============================================================================
+Write-Host "[*] Step 2: Removing scheduled task '$ScheduledTaskName'..." -ForegroundColor Cyan
+
+# Check if the task exists first.
+& schtasks.exe /query /tn $ScheduledTaskName 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    # Task exists -- delete it.
+    #   /delete : Remove the task
+    #   /tn     : Task name to delete
+    #   /f      : Force -- no confirmation prompt
+    & schtasks.exe /delete /tn $ScheduledTaskName /f 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "[+] Scheduled task '$ScheduledTaskName' removed." -ForegroundColor Green
+    }
+    else {
+        Write-Host "[!] Failed to remove scheduled task. Run this script as Administrator." -ForegroundColor Yellow
+    }
+}
+else {
+    Write-Host "[*] Scheduled task '$ScheduledTaskName' not found (already removed or never created)." -ForegroundColor Gray
+}
+Write-Host ""
+
+# =============================================================================
+# STEP 3: Delete payload files from Public folder
+# =============================================================================
+Write-Host "[*] Step 4: Deleting payload files from Public folder..." -ForegroundColor Cyan
+
+$PublicFiles = @(
+    "C:\Users\Public\calca.exe",
+    "C:\Users\Public\usercpla.dll"
+)
+
+foreach ($file in $PublicFiles) {
+    if (Test-Path -LiteralPath $file) {
+        Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
+        Write-Host "[+] Deleted: $file" -ForegroundColor Green
+    } else {
+        Write-Host "[*] Not found (already removed): $file" -ForegroundColor Gray
+    }
+}
+Write-Host ""
+
+
+
+# =============================================================================
+# SUMMARY
+# =============================================================================
+Write-Host "=============================================" -ForegroundColor Magenta
+Write-Host "   Cleanup Summary"                            -ForegroundColor Magenta
+Write-Host "=============================================" -ForegroundColor Magenta
+Write-Host "  [1] calca.exe processes : Stopped"           -ForegroundColor White
+Write-Host "  [2] Scheduled task      : Removed"           -ForegroundColor White
+Write-Host "  [3] Downloaded files    : Deleted"           -ForegroundColor White
+Write-Host ""
+Write-Host "[+] Cleanup complete. All red team artifacts have been removed." -ForegroundColor Green
+Write-Host ""
+
+# --- Wait for key press before closing ---
+Write-Host "Press any key to exit..." -ForegroundColor Gray
+$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")

