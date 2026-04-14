@@ -17,7 +17,7 @@
 
 # --- Configuration ---
 # These must match the values used in red_team_simulation.ps1.
-$DownloadFolder    = "$PSScriptRoot\Downloads"
+$DownloadFolder    = "$env:SystemRoot\Temp"
 $ScheduledTaskName = "Windows Services and Checks"
 $ProcessName       = "calca"
 
